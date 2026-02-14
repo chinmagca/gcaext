@@ -1,10 +1,18 @@
 import { motion } from 'framer-motion';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
-import { RefreshCw, FileText, CheckCircle, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { RefreshCw, FileText, CheckCircle, AlertTriangle, ShieldAlert, TrendingUp } from 'lucide-react';
 import { type AssessmentResult } from '../../logic/scoring';
 import { cn } from '../../lib/utils';
 
-export default function ResultSummary({ result, onReset }: { result: AssessmentResult, onReset: () => void }) {
+export default function ResultSummary({
+    result,
+    assessmentCount,
+    onReset
+}: {
+    result: AssessmentResult;
+    assessmentCount: number;
+    onReset: () => void;
+}) {
     const chartData = [
         { subject: 'External Exposure', A: result.breakdown.exposure, fullMark: 100 },
         { subject: 'Data Sensitivity', A: result.breakdown.dataSensitivity, fullMark: 100 },
@@ -36,6 +44,19 @@ export default function ResultSummary({ result, onReset }: { result: AssessmentR
             >
                 <h2 className="text-3xl font-bold text-white mb-2">Assessment Report</h2>
                 <p className="text-slate-400">Based on your firm's profile and digital footprint.</p>
+
+                {/* Assessment Counter */}
+                <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: 0.1 }}
+                    className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-brand-cyan/10 border border-brand-cyan/30 rounded-full"
+                >
+                    <TrendingUp className="w-4 h-4 text-brand-cyan" />
+                    <span className="text-sm text-brand-cyan font-medium">
+                        Assessment #{assessmentCount}
+                    </span>
+                </motion.div>
             </motion.div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">

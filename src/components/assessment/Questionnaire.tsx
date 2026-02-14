@@ -1,15 +1,20 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowRight, Shield, Server, Briefcase, Globe, Lock, AlertTriangle, CheckCircle } from 'lucide-react';
-import { calculateScore, type AssessmentResponses, type AssessmentResult } from '../../logic/scoring';
+import { ArrowRight, Shield, Server, Briefcase, TrendingUp, CheckCircle } from 'lucide-react';
+import { type AssessmentResponses, type AssessmentResult } from '../../logic/scoring';
+import { calculateScoreFromConfig } from '../../logic/scoringConfig';
+import { getActiveQuestionnaireConfig, type QuestionnaireConfig } from '../../config/questionnaireSelector';
+import type { StepConfig } from '../../config/questionnaireConfig';
 import { cn } from '../../lib/utils';
 import ResultSummary from '../result/ResultSummary';
 
-// Steps definition
+// Get active questionnaire configuration
+const config: QuestionnaireConfig = getActiveQuestionnaireConfig();
+
+// Steps definition (firm-type + config steps + result)
 const STEPS = [
     'firm-type',
-    'digital-footprint',
-    'risk-factors',
+    ...config.steps.map(s => s.id),
     'result'
 ] as const;
 
@@ -17,51 +22,70 @@ export default function Questionnaire() {
     const [currentStep, setCurrentStep] = useState<typeof STEPS[number]>('firm-type');
     const [answers, setAnswers] = useState<Partial<AssessmentResponses>>({});
     const [result, setResult] = useState<AssessmentResult | null>(null);
+    const [assessmentCount, setAssessmentCount] = useState(0);
+    const hasIncrementedRef = useRef(false);
+
+    useEffect(() => {
+        // Increment assessment count only once (prevent double increment in StrictMode)
+        if (!hasIncrementedRef.current) {
+            hasIncrementedRef.current = true;
+            const currentCount = parseInt(localStorage.getItem('gca_assessment_count') || '0', 10);
+            const newCount = currentCount + 1;
+            localStorage.setItem('gca_assessment_count', newCount.toString());
+            setAssessmentCount(newCount);
+        }
+    }, []);
 
     const handleNext = (data: Partial<AssessmentResponses>) => {
         const newAnswers = { ...answers, ...data };
         setAnswers(newAnswers);
 
-        if (currentStep === 'firm-type') {
-            setCurrentStep('digital-footprint');
-        } else if (currentStep === 'digital-footprint') {
-            // Check if any digital presence
-            const hasPresence = data.usesEmail || data.usesDigitalPayments || data.hasWebsiteOrApp;
-            if (!hasPresence) {
-                // Skip to end with 0 score
-                const finalResult = calculateScore({ ...newAnswers, hasPublicIPs: false } as AssessmentResponses);
-                setResult(finalResult);
-                setCurrentStep('result');
-            } else {
-                setCurrentStep('risk-factors');
-            }
-        } else if (currentStep === 'risk-factors') {
-            const finalResult = calculateScore(newAnswers as AssessmentResponses);
+        const currentIndex = STEPS.indexOf(currentStep);
+        const nextIndex = currentIndex + 1;
+
+        if (nextIndex < STEPS.length - 1) {
+            // Move to next step
+            setCurrentStep(STEPS[nextIndex]);
+        } else {
+            // Last step - calculate results
+            const finalResult = calculateScoreFromConfig(newAnswers as AssessmentResponses, config);
             setResult(finalResult);
             setCurrentStep('result');
         }
     };
 
     if (currentStep === 'result' && result) {
-        return <ResultSummary result={result} onReset={() => window.location.reload()} />;
+        return <ResultSummary result={result} assessmentCount={assessmentCount} onReset={() => window.location.reload()} />;
     }
 
     return (
         <div className="max-w-2xl mx-auto px-6 py-12">
+            {/* Assessment Counter Badge */}
+            <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-6 flex justify-end"
+            >
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-cyan/10 border border-brand-cyan/30 rounded-full">
+                    <TrendingUp className="w-3.5 h-3.5 text-brand-cyan" />
+                    <span className="text-xs text-brand-cyan font-medium">
+                        Assessment #{assessmentCount}
+                    </span>
+                </div>
+            </motion.div>
+
             <div className="mb-8">
                 <div className="flex items-center space-x-2 text-sm text-brand-cyan mb-2">
                     <Shield className="w-4 h-4" />
                     <span className="uppercase tracking-wider font-semibold">GCA Assessment Tool</span>
                 </div>
                 <h1 className="text-3xl font-bold text-white mb-2">
-                    {currentStep === 'firm-type' && "Let's start with the basics."}
-                    {currentStep === 'digital-footprint' && "Identify your digital footprint."}
-                    {currentStep === 'risk-factors' && "Assess your risk exposure."}
+                    {currentStep === 'firm-type' ? "Let's start with the basics." :
+                        config.steps.find(s => s.id === currentStep)?.title || ''}
                 </h1>
                 <p className="text-slate-400">
-                    {currentStep === 'firm-type' && "Select the category that best describes your organization."}
-                    {currentStep === 'digital-footprint' && "Select all that apply to your daily operations."}
-                    {currentStep === 'risk-factors' && "Help us understand your operational risks."}
+                    {currentStep === 'firm-type' ? "Select the category that best describes your organization." :
+                        config.steps.find(s => s.id === currentStep)?.description || ''}
                 </p>
             </div>
 
@@ -69,12 +93,16 @@ export default function Questionnaire() {
                 {currentStep === 'firm-type' && (
                     <FirmTypeStep key="firm-type" onNext={handleNext} />
                 )}
-                {currentStep === 'digital-footprint' && (
-                    <DigitalFootprintStep key="digital-footprint" onNext={handleNext} />
-                )}
-                {currentStep === 'risk-factors' && (
-                    <RiskFactorsStep key="risk-factors" onNext={handleNext} />
-                )}
+                {config.steps.map(step => (
+                    currentStep === step.id && (
+                        <GenericQuestionStep
+                            key={step.id}
+                            stepConfig={step}
+                            onNext={handleNext}
+                            isLastStep={STEPS.indexOf(currentStep) === STEPS.length - 2}
+                        />
+                    )
+                ))}
             </AnimatePresence>
         </div>
     );
@@ -115,14 +143,25 @@ function FirmTypeStep({ onNext }: { onNext: (data: Partial<AssessmentResponses>)
     );
 }
 
-function DigitalFootprintStep({ onNext }: { onNext: (data: Partial<AssessmentResponses>) => void }) {
-    const [selection, setSelection] = useState({
-        usesEmail: false,
-        usesDigitalPayments: false,
-        hasWebsiteOrApp: false,
+// Generic step component that renders questions from configuration
+function GenericQuestionStep({
+    stepConfig,
+    onNext,
+    isLastStep
+}: {
+    stepConfig: StepConfig;
+    onNext: (data: Partial<AssessmentResponses>) => void;
+    isLastStep: boolean;
+}) {
+    const [selection, setSelection] = useState<Record<string, boolean>>(() => {
+        const initial: Record<string, boolean> = {};
+        stepConfig.questions.forEach(q => {
+            initial[q.id] = false;
+        });
+        return initial;
     });
 
-    const toggle = (key: keyof typeof selection) => {
+    const toggle = (key: string) => {
         setSelection(prev => ({ ...prev, [key]: !prev[key] }));
     };
 
@@ -133,108 +172,29 @@ function DigitalFootprintStep({ onNext }: { onNext: (data: Partial<AssessmentRes
             exit={{ opacity: 0, x: -20 }}
             className="space-y-4"
         >
-            <ToggleCard
-                title="We use Business Email"
-                description="Employees use email for internal or external communication."
-                icon={Server}
-                checked={selection.usesEmail}
-                onChange={() => toggle('usesEmail')}
-            />
-            <ToggleCard
-                title="We accept Digital Payments"
-                description="UPI, Netbanking, Credit Cards, or Payment Gateways."
-                icon={Lock}
-                checked={selection.usesDigitalPayments}
-                onChange={() => toggle('usesDigitalPayments')}
-            />
-            <ToggleCard
-                title="We have a Website or Mobile App"
-                description="A public-facing platform for customers or clients."
-                icon={Globe}
-                checked={selection.hasWebsiteOrApp}
-                onChange={() => toggle('hasWebsiteOrApp')}
-            />
+            {stepConfig.questions.map(question => (
+                <ToggleCard
+                    key={question.id}
+                    title={question.title}
+                    description={question.description}
+                    icon={question.icon}
+                    checked={selection[question.id]}
+                    onChange={() => toggle(question.id)}
+                />
+            ))}
 
             <div className="pt-6 flex justify-end">
                 <button
-                    onClick={() => onNext(selection)}
+                    onClick={() => onNext(selection as Partial<AssessmentResponses>)}
                     className="bg-brand-cyan hover:bg-cyan-400 text-slate-950 font-semibold py-3 px-8 rounded-lg flex items-center gap-2 transition-colors"
                 >
-                    Continue <ArrowRight className="w-4 h-4" />
+                    {isLastStep ? 'View Analysis' : 'Continue'} <ArrowRight className="w-4 h-4" />
                 </button>
             </div>
         </motion.div>
     );
 }
 
-function RiskFactorsStep({ onNext }: { onNext: (data: Partial<AssessmentResponses>) => void }) {
-    const [selection, setSelection] = useState({
-        hasPublicIPs: false,
-        storesCustomerData: false,
-        remoteWork: false,
-        regulatoryMandates: false,
-        criticalDowntime: false,
-    });
-
-    const toggle = (key: keyof typeof selection) => {
-        setSelection(prev => ({ ...prev, [key]: !prev[key] }));
-    };
-
-    return (
-        <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            className="space-y-4"
-        >
-            <ToggleCard
-                title="Publicly Exposed Servers (IPs)"
-                description="Do you host servers that are accessible from the internet?"
-                icon={Globe}
-                checked={selection.hasPublicIPs}
-                onChange={() => toggle('hasPublicIPs')}
-            />
-            <ToggleCard
-                title="Store Sensitive Customer Data"
-                description="Do you store PII, Financial Records, or Health Data?"
-                icon={Lock}
-                checked={selection.storesCustomerData}
-                onChange={() => toggle('storesCustomerData')}
-            />
-            <ToggleCard
-                title="Remote Work / VPN Access"
-                description="Do employees access systems from outside the office?"
-                icon={Server}
-                checked={selection.remoteWork}
-                onChange={() => toggle('remoteWork')}
-            />
-            <ToggleCard
-                title="Regulatory Compliance"
-                description="Are you required to follow ISO, RBI, HIPAA, or GDPR norms?"
-                icon={Shield}
-                checked={selection.regulatoryMandates}
-                onChange={() => toggle('regulatoryMandates')}
-            />
-            {/* Show Operational Dependency mainly for Non-IT or both */}
-            <ToggleCard
-                title="Critical Uptime Dependency"
-                description="Does 1 hour of downtime cost you significant revenue?"
-                icon={AlertTriangle}
-                checked={selection.criticalDowntime}
-                onChange={() => toggle('criticalDowntime')}
-            />
-
-            <div className="pt-6 flex justify-end">
-                <button
-                    onClick={() => onNext(selection)}
-                    className="bg-brand-cyan hover:bg-cyan-400 text-slate-950 font-semibold py-3 px-8 rounded-lg flex items-center gap-2 transition-colors"
-                >
-                    View Analysis <ArrowRight className="w-4 h-4" />
-                </button>
-            </div>
-        </motion.div>
-    );
-}
 
 function ToggleCard({ title, description, icon: Icon, checked, onChange }: any) {
     return (
